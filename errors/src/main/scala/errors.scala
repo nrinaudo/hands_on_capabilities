@@ -1,3 +1,5 @@
+package errors
+
 import language.experimental.captureChecking
 import scala.util.control.*
 import scala.caps.*
@@ -95,3 +97,52 @@ def sequencePositive(ois: List[Option[Int]]): Either[String, Option[List[Int]]] 
 // def broken(is: Iterator[Option[Int]]): Option[Iterator[Int]] =
 //   option:
 //     is.map(_.?)
+
+// - Generic sequencing -------------------------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------------------------------------------------
+// This demonstrates how to write a generic `sequence` implementation using this mechanism, by using type classes.
+
+// Ability to map into some higher kinded type.
+trait Functor[F[_]]:
+  extension [A](fa: F[A]) def map[B](f: A => B): F[B]
+
+object Functor:
+  given Functor[List] with
+    extension [A](fa: List[A]) def map[B](f: A => B) = fa.map(f)
+
+// Ability to lift a value into some higher kinded type.
+trait Lift[F[_]]:
+  extension [A](a: A) def lift: F[A]
+
+object Lift:
+  given Lift[Option]:
+    extension [A](a: A ) def lift = Some(a)
+
+  given [X] => Lift[Either[X, *]]:
+    extension [A](a: A ) def lift = Right(a)
+
+// Ability to unwrap the value contained by some higher kinded type as an effectful computation.
+trait Unwrap[F[_]]:
+  extension [A](fa: F[A]) def ?[B]: Label[F[B]] ?=> A
+
+object Unwrap:
+  given Unwrap[Option]:
+    extension [A](oa: Option[A]) def ?[B] =
+      oa match
+        case Some(a) => a
+        case None    => break(Option.empty)
+
+  given [X] => Unwrap[Either[X, *]]:
+    extension [A](ea: Either[X, A]) def ?[B] =
+      ea match
+        case Right(a) => a
+        case Left(x)  => break(Left(x): Either[X, B])
+
+// Prompt specifically to allow `_.?`.
+def unwrap[F[_]: Lift, A](fa: Label[F[A]] ?=> A): F[A] =
+  handle(fa, _.lift, identity)
+
+// Putting it all together.
+def sequenceGeneric[F[_]: Functor, G[_]: Unwrap: Lift, A](fga: F[G[A]]): G[F[A]] =
+  unwrap:
+    fga.map(_.?)
